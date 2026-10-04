@@ -69,7 +69,7 @@ PERSIST_DIRECTORY = "./chroma_db"
 embeddings = OpenAIEmbeddings()
 
 
-def init_chelsea_vecotr_db(file_path: str = "./data/chelsea_info.txt"):
+def init_chelsea_vector_db(file_path: str = "./data/chelsea_info.txt"):
     """
     첼시 관련 문서를 읽은 뒤
     문서를 작은 Chunk로 나누고,
