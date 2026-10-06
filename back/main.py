@@ -2,6 +2,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
+from dotenv import load_dotenv # 추가
+
+# .env 파일에서 환경 변수 불러오기
+load_dotenv()
 
 from rag_service import init_chelsea_vector_db
 from chain_service import chelsea_chat_chain
