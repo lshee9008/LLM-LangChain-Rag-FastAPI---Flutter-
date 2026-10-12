@@ -1,16 +1,16 @@
 [project]
 name = "back"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.3.0"
+description = "Chelsea FC fan chatbot with RAG, live tools and SSE streaming"
 readme = "README.md"
 requires-python = ">=3.10.12"
 dependencies = [
-    "faiss-cpu>=1.15.1",
     "fastapi>=0.142.2",
-    "langchain>=1.4.3",
+    "httpx>=0.28.1",
+    "langchain-core>=1.6.6",
     "langchain-chroma>=1.1.0",
-    "langchain-community>=0.4.2",
     "langchain-openai>=1.6.7",
+    "langchain-text-splitters>=1.1.3",
     "onnxruntime<1.24",
     "python-dotenv>=1.2.4",
     "uvicorn>=0.54.0",
