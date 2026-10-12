@@ -45,3 +45,7 @@ class ConversationTitle(BaseModel):
 
 class ArchiveRequest(BaseModel):
     archived: bool
+
+
+class PinRequest(BaseModel):
+    pinned: bool

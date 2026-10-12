@@ -1,8 +1,8 @@
-# Chelsea FC Blues Bot · Phase 4
+# Chelsea FC Blues Bot · Phase 5
 
-첼시 팬을 위한 **비공식** 챗봇입니다. 구단 문서 RAG, Tavily 검색, API-Football 통계와 SSE 답변에 회원가입·로그인, 내 대화 목록·복원·보관을 추가했습니다.
+첼시 팬을 위한 **비공식** 챗봇입니다. 구단 문서 RAG, 실시간 도구, 로그인·대화 복원 위에 반응형 팬 라운지, 대화 검색·즐겨찾기, Markdown 답변과 출처 링크를 더했습니다.
 
-![로그인 화면](docs/images/phase4-login.jpg)
+![팬 라운지](docs/images/phase5-lounge.jpg)
 
 ## 실행
 
@@ -32,10 +32,21 @@ flutter run -d chrome --web-hostname 127.0.0.1 --web-port 5173 --dart-define=API
 - API 명세: http://127.0.0.1:8000/docs
 - 상태: http://127.0.0.1:8000/health
 
-## Phase 4 동작
+## Phase 5 사용법
+
+- 데스크톱(가로 1,000px 이상)은 대화 목록을 상시 표시합니다. 모바일은 왼쪽 상단 **내 대화** 메뉴에서 엽니다.
+- **대화 내용 검색**은 저장된 제목·질문·답변을 찾습니다. 최대 80자의 연속 문자열 검색이며 영문 대소문자는 구분하지 않습니다. 보관함·즐겨찾기 필터와 함께 사용할 수 있습니다.
+- 대화 메뉴의 **즐겨찾기**는 계정에 저장하고 목록 상단에 표시합니다. 별 버튼은 즐겨찾기만 보여줍니다. 새로고침 시에는 즐겨찾기 순서와 관계없이 가장 최근 활성 대화를 엽니다.
+- 보관한 대화도 읽을 수 있습니다. **복원하고 이어가기**를 누르면 다시 질문할 수 있습니다.
+- 답변의 제목·강조·목록·표를 표시하고, 넓은 표는 가로로 스크롤합니다. 출처를 펼치면 자료 종류·조회 시각·발췌문·원문 링크를 확인할 수 있습니다.
+- **답변 복사**는 원래 Markdown을, 상단 **대화 복사**는 질문·답변·경고·출처를 함께 클립보드에 복사합니다.
+- 키보드 Enter는 전송, Shift + Enter는 줄바꿈입니다. 한글 조합 중 Enter는 전송하지 않습니다. 모바일에서는 전송 버튼을 사용하세요.
+- 이전 답변을 읽는 동안에는 스트리밍이 화면을 아래로 이동시키지 않습니다. **최신 답변** 버튼으로 돌아올 수 있습니다.
+
+## 계정과 저장
 
 - 웹 로그인은 7일 만료 HttpOnly 쿠키로 유지됩니다. 브라우저 새로고침 후 가장 최근의 활성 대화를 불러옵니다.
-- 왼쪽 상단 **내 대화**에서 목록, 이름 변경, 보관, 보관함에서 복원을 사용할 수 있습니다.
+- 대화 목록에서 이름 변경, 즐겨찾기, 보관, 보관함에서 복원을 사용할 수 있습니다.
 - 새 대화 화면을 여는 것만으로 빈 대화를 만들지 않으며, 첫 질문을 보낼 때 서버가 대화 ID를 생성합니다.
 - 완료한 답변의 출처·조회 시각·경고도 함께 저장하고 복원합니다.
 - 계정당 최대 100개 대화, 대화당 최근 100턴을 저장합니다. 모델에는 최근 10턴만 전달합니다. 보관은 삭제가 아니며 계정의 보관 한도에 포함됩니다.
@@ -72,9 +83,11 @@ API-Football은 API-SPORTS 직접 가입 키와 `x-apisports-key` 헤더를 사�
 | `POST /api/v1/conversations` | 내 대화 생성 |
 | `GET /api/v1/conversations?archived=false` | 내 활성 대화 목록 |
 | `GET /api/v1/conversations?archived=true` | 내 보관함 |
+| `GET /api/v1/conversations?q=파머&pinned_only=true` | 제목·질문·답변 검색 + 즐겨찾기 필터 |
 | `GET /api/v1/conversations/{id}` | 완료한 대화와 출처 복원 |
 | `PATCH /api/v1/conversations/{id}` | `{"title":"경기 이야기"}`로 이름 변경 |
 | `POST /api/v1/conversations/{id}/archive` | `{"archived":true}` 보관 / `false` 복원 |
+| `POST /api/v1/conversations/{id}/pin` | `{"pinned":true}` 즐겨찾기 / `false` 해제 |
 | `POST /api/v1/chat` | 일반 답변 |
 | `POST /api/v1/chat/stream` | SSE 답변 |
 
@@ -107,6 +120,7 @@ SSE 이벤트는 `status` → `sources` → `token`(여러 번) → `done`입니
 
 - `back/runtime/history.sqlite3`: 계정, 해시된 인증 정보, 대화, 출처, 요청 제한, 생성 잠금. 계정 정보가 포함되므로 외부에 업로드하지 마세요.
 - 기존 Phase 3 DB는 시작 시 필요한 컬럼과 테이블을 추가합니다. 이전 기록은 보존하지만 소유자가 없으므로 새 계정에 공개하지 않습니다. 업그레이드 전 서버를 멈추고 DB를 백업하는 것을 권장합니다.
+- Phase 4 DB에는 `pinned` 컬럼을 기본 `false`로 추가합니다. 계정·기존 대화·출처를 유지하며, 별 표시를 변경해도 대화의 마지막 답변 시각은 바꾸지 않습니다.
 - `back/data/*.txt`는 최초 문서 검색 시 인덱싱합니다. 문서 변경은 서버 재시작 후 반영합니다.
 - `back/chroma_phase3/`를 계속 사용하고 Phase 2 DB는 보존합니다.
 - 생성 잠금은 토큰으로 구분하고, 작업 종료·취소 시 해제합니다. 워커 비정상 종료 때는 요청 제한 시간 + 30초 후 만료합니다.
@@ -128,4 +142,4 @@ flutter build web --release --dart-define=API_BASE_URL=http://127.0.0.1:8000
 
 GitHub Actions 설정은 백엔드 Python 3.10/3.12 테스트, Flutter 정적 검사·테스트·웹 빌드를 포함하며 외부 API 키 없이 실행합니다. 원격 CI 결과는 GitHub Actions에서 별도로 확인해야 합니다.
 
-개발기: [Phase 3](docs/phase3-blog.md) · [Phase 4](docs/phase4-blog.md)
+개발기: [Phase 3](docs/phase3-blog.md) · [Phase 4](docs/phase4-blog.md) · [Phase 5](docs/phase5-blog.md)

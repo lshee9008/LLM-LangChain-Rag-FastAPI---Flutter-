@@ -40,6 +40,8 @@ class HistoryStore:
             db.execute("""CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL,
                 created REAL NOT NULL, updated REAL NOT NULL, archived INTEGER NOT NULL DEFAULT 0)""")
+            if "pinned" not in {r["name"] for r in db.execute("PRAGMA table_info(conversations)")}:
+                db.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
             db.execute("CREATE INDEX IF NOT EXISTS conversations_owner ON conversations(owner, archived, updated)")
             db.execute("CREATE TABLE IF NOT EXISTS generation_leases (session TEXT PRIMARY KEY, token TEXT, expires REAL)")
 
@@ -73,7 +75,7 @@ class HistoryStore:
     @staticmethod
     def summary(row):
         return {"id": row["id"], "title": row["title"], "created_at": row["created"],
-                "updated_at": row["updated"], "archived": bool(row["archived"])}
+                "updated_at": row["updated"], "archived": bool(row["archived"]), "pinned": bool(row["pinned"])}
 
     def create(self, owner):
         with closing(self.connect()) as db, db:
@@ -82,13 +84,19 @@ class HistoryStore:
                 raise ConversationLimit()
             now = time.time()
             session = secrets.token_hex(24)
-            db.execute("INSERT INTO conversations VALUES (?, ?, ?, ?, ?, 0)", (session, owner, "새 대화", now, now))
+            db.execute("INSERT INTO conversations(id, owner, title, created, updated) VALUES (?, ?, ?, ?, ?)",
+                       (session, owner, "새 대화", now, now))
             return self.summary(db.execute("SELECT * FROM conversations WHERE id=?", (session,)).fetchone())
 
-    def list_conversations(self, owner, archived=False):
+    def list_conversations(self, owner, archived=False, query="", pinned_only=False):
         with closing(self.connect()) as db:
-            rows = db.execute("SELECT * FROM conversations WHERE owner=? AND archived=? ORDER BY updated DESC LIMIT 100",
-                              (owner, int(archived))).fetchall()
+            # instr treats %, _ and quotes literally; all search terms stay bound parameters.
+            rows = db.execute("""SELECT * FROM conversations c WHERE owner=? AND archived=?
+                AND (?=0 OR pinned=1) AND (?='' OR instr(lower(title), lower(?))>0 OR EXISTS (
+                    SELECT 1 FROM turns t WHERE t.session=c.id
+                    AND (instr(lower(t.question), lower(?))>0 OR instr(lower(t.answer), lower(?))>0)))
+                ORDER BY pinned DESC, updated DESC, id DESC LIMIT 100""",
+                (owner, int(archived), int(pinned_only), query, query, query, query)).fetchall()
         return [self.summary(r) for r in rows]
 
     def require_active(self, session, owner):
@@ -109,7 +117,7 @@ class HistoryStore:
                                 "sources": json.loads(r["sources"]), "warnings": json.loads(r["warnings"])} for r in turns]
             return result
 
-    def update(self, session, owner, title=None, archived=None):
+    def update(self, session, owner, title=None, archived=None, pinned=None):
         with closing(self.connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM conversations WHERE id=? AND owner=?", (session, owner)).fetchone()
@@ -117,7 +125,8 @@ class HistoryStore:
                 raise ConversationMissing()
             if db.execute("SELECT 1 FROM generation_leases WHERE session=? AND expires>?", (session, time.time())).fetchone():
                 raise ConversationBusy()
-            db.execute("UPDATE conversations SET title=?, archived=? WHERE id=?", (
+            db.execute("UPDATE conversations SET title=?, archived=?, pinned=? WHERE id=?", (
                 title if title is not None else row["title"],
-                int(archived) if archived is not None else row["archived"], session))
+                int(archived) if archived is not None else row["archived"],
+                int(pinned) if pinned is not None else row["pinned"], session))
             return self.summary(db.execute("SELECT * FROM conversations WHERE id=?", (session,)).fetchone())

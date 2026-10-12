@@ -138,10 +138,12 @@ class ChatApi {
 
   Future<List<Map<String, dynamic>>> conversations({
     bool archived = false,
+    String query = '',
+    bool pinnedOnly = false,
   }) async =>
       ((await _json(
                 'GET',
-                '/api/v1/conversations?archived=$archived',
+                '/api/v1/conversations?archived=$archived&q=${Uri.encodeQueryComponent(query)}&pinned_only=$pinnedOnly',
               ))['conversations']
               as List)
           .cast<Map<String, dynamic>>();
@@ -158,6 +160,10 @@ class ChatApi {
     await _json('POST', '/api/v1/conversations/$id/archive', {
       'archived': archived,
     });
+  }
+
+  Future<void> pinConversation(String id, bool pinned) async {
+    await _json('POST', '/api/v1/conversations/$id/pin', {'pinned': pinned});
   }
 
   void cancel() {

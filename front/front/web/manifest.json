@@ -1,35 +1,19 @@
 {
-    "name": "front",
-    "short_name": "front",
-    "start_url": ".",
-    "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
-    "prefer_related_applications": false,
-    "icons": [
-        {
-            "src": "icons/Icon-192.png",
-            "sizes": "192x192",
-            "type": "image/png"
-        },
-        {
-            "src": "icons/Icon-512.png",
-            "sizes": "512x512",
-            "type": "image/png"
-        },
-        {
-            "src": "icons/Icon-maskable-192.png",
-            "sizes": "192x192",
-            "type": "image/png",
-            "purpose": "maskable"
-        },
-        {
-            "src": "icons/Icon-maskable-512.png",
-            "sizes": "512x512",
-            "type": "image/png",
-            "purpose": "maskable"
-        }
-    ]
+  "name": "Blues Bot · 첼시 팬 라운지",
+  "short_name": "Blues Bot",
+  "lang": "ko",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F6F7F9",
+  "theme_color": "#101D3A",
+  "description": "첼시 팬을 위한 비공식 AI 팬 라운지",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "blues-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }

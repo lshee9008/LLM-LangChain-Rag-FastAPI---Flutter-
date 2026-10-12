@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../services/chat_api.dart';
+import '../theme/blues_theme.dart';
+import '../widgets/brand.dart';
 import 'chat_screen.dart';
 
 class AuthGate extends StatefulWidget {
@@ -135,6 +137,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _password = TextEditingController();
   bool _register = false;
   bool _busy = false;
+  bool _hidePassword = true;
   String? _error;
 
   @override
@@ -179,137 +182,293 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF3F6FB),
-    body: Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Form(
-                key: _form,
-                child: AutofillGroup(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Icon(
-                        Icons.shield_outlined,
-                        size: 48,
-                        color: Color(0xFF034694),
-                      ),
-                      const SizedBox(height: 20),
-                      const Text(
-                        'BLUES BOT',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 2,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _register
-                            ? '내 대화를 이어갈 계정을 만들어보세요.'
-                            : '다시 만나 반가워요.\n로그인하고 첼시 이야기를 이어가세요.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(height: 1.6),
-                      ),
-                      const SizedBox(height: 28),
-                      TextFormField(
-                        key: const Key('username-input'),
-                        controller: _username,
-                        enabled: !_busy,
-                        autofillHints: const [AutofillHints.username],
-                        maxLength: 32,
-                        textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
-                          labelText: '아이디',
-                          helperText: '영문·숫자·밑줄 3~32자',
-                          counterText: '',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) =>
-                            RegExp(r'^[a-zA-Z0-9_]{3,32}$')
-                                .hasMatch(value?.trim() ?? '')
-                            ? null
-                            : '아이디 형식을 확인해 주세요.',
-                      ),
-                      const SizedBox(height: 18),
-                      TextFormField(
-                        key: const Key('password-input'),
-                        controller: _password,
-                        enabled: !_busy,
-                        obscureText: true,
-                        autofillHints: [
-                          _register
-                              ? AutofillHints.newPassword
-                              : AutofillHints.password,
-                        ],
-                        maxLength: 128,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) => _submit(),
-                        decoration: const InputDecoration(
-                          labelText: '비밀번호',
-                          helperText: '10자 이상',
-                          counterText: '',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) => (value?.length ?? 0) >= 10
-                            ? null
-                            : '비밀번호는 10자 이상 입력해 주세요.',
-                      ),
-                      if (_error != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 16),
-                          child: Text(
-                            _error!,
-                            style: const TextStyle(color: Colors.red),
+    body: LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 960;
+        return SafeArea(
+          child: Row(
+            children: [
+              if (wide) Expanded(flex: 5, child: _story()),
+              Expanded(
+                flex: 6,
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.all(wide ? 48 : 24),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 380),
+                      child: Form(
+                        key: _form,
+                        child: AutofillGroup(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (!wide) ...[
+                                const BluesBrand(compact: true),
+                                const SizedBox(height: 28),
+                              ],
+                              Text(
+                                _register
+                                    ? 'JOIN THE BLUE SIDE'
+                                    : 'WELCOME BACK',
+                                style: const TextStyle(
+                                  color: BluesColors.blue,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 2,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                _register ? '나만의 블루 스페이스.' : '첼시 이야기를 이어가세요.',
+                                style: const TextStyle(
+                                  color: BluesColors.ink,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -1,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _register
+                                    ? '계정을 만들고 좋아하는 이야기를 모아보세요.'
+                                    : '저장한 대화와 새로운 이야기가 기다리고 있어요.',
+                                style: const TextStyle(
+                                  color: BluesColors.muted,
+                                  fontSize: 12,
+                                  height: 1.7,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              TextFormField(
+                                key: const Key('username-input'),
+                                controller: _username,
+                                enabled: !_busy,
+                                autofillHints: const [AutofillHints.username],
+                                autocorrect: false,
+                                enableSuggestions: false,
+                                maxLength: 32,
+                                textInputAction: TextInputAction.next,
+                                decoration: const InputDecoration(
+                                  labelText: '아이디',
+                                  helperText: '영문·숫자·밑줄 3~32자',
+                                  counterText: '',
+                                  prefixIcon: Icon(
+                                    Icons.person_outline_rounded,
+                                    size: 20,
+                                  ),
+                                ),
+                                validator: (value) =>
+                                    RegExp(r'^[a-zA-Z0-9_]{3,32}$')
+                                        .hasMatch(value?.trim() ?? '')
+                                    ? null
+                                    : '아이디 형식을 확인해 주세요.',
+                              ),
+                              const SizedBox(height: 16),
+                              TextFormField(
+                                key: const Key('password-input'),
+                                controller: _password,
+                                enabled: !_busy,
+                                obscureText: _hidePassword,
+                                autocorrect: false,
+                                enableSuggestions: false,
+                                autofillHints: [
+                                  _register
+                                      ? AutofillHints.newPassword
+                                      : AutofillHints.password,
+                                ],
+                                maxLength: 128,
+                                textInputAction: TextInputAction.done,
+                                onFieldSubmitted: (_) => _submit(),
+                                decoration: InputDecoration(
+                                  labelText: '비밀번호',
+                                  helperText: '10자 이상',
+                                  counterText: '',
+                                  prefixIcon: const Icon(
+                                    Icons.lock_outline_rounded,
+                                    size: 20,
+                                  ),
+                                  suffixIcon: IconButton(
+                                    tooltip: _hidePassword
+                                        ? '비밀번호 보기'
+                                        : '비밀번호 숨기기',
+                                    onPressed: () => setState(
+                                      () => _hidePassword = !_hidePassword,
+                                    ),
+                                    icon: Icon(
+                                      _hidePassword
+                                          ? Icons.visibility_outlined
+                                          : Icons.visibility_off_outlined,
+                                      size: 19,
+                                    ),
+                                  ),
+                                ),
+                                validator: (value) => (value?.length ?? 0) >= 10
+                                    ? null
+                                    : '비밀번호는 10자 이상 입력해 주세요.',
+                              ),
+                              if (_error != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 16),
+                                  child: Semantics(
+                                    liveRegion: true,
+                                    child: Text(
+                                      _error!,
+                                      style: const TextStyle(
+                                        color: Color(0xFFAE273A),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(height: 22),
+                              FilledButton(
+                                onPressed: _busy ? null : _submit,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: Text(
+                                    _busy
+                                        ? '연결 중...'
+                                        : _register
+                                        ? '가입하고 시작하기'
+                                        : '로그인',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextButton(
+                                onPressed: _busy
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _register = !_register;
+                                          _error = null;
+                                        });
+                                      },
+                                child: Text(
+                                  _register
+                                      ? '이미 계정이 있나요? 로그인'
+                                      : '처음 오셨나요? 회원가입',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              const Text(
+                                '첼시 팬을 위한 비공식 AI',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: BluesColors.muted,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      const SizedBox(height: 24),
-                      FilledButton(
-                        onPressed: _busy ? null : _submit,
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Text(
-                            _busy
-                                ? '연결 중...'
-                                : _register
-                                ? '가입하고 시작하기'
-                                : '로그인',
-                          ),
-                        ),
                       ),
-                      TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () {
-                                setState(() {
-                                  _register = !_register;
-                                  _error = null;
-                                });
-                              },
-                        child: Text(
-                          _register ? '이미 계정이 있나요? 로그인' : '처음 오셨나요? 회원가입',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        '첼시 팬을 위한 비공식 AI',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+
+  Widget _story() => Container(
+    color: BluesColors.navy,
+    child: LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: IntrinsicHeight(
+            child: Padding(
+              padding: const EdgeInsets.all(48),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const BluesBrand(light: true),
+                  const Spacer(),
+                  const SizedBox(height: 36),
+                  const Text(
+                    'SAME CLUB.\nNEW CONVERSATIONS.',
+                    style: TextStyle(
+                      color: Color(0xFFDFE8FF),
+                      fontSize: 11,
+                      height: 1.8,
+                      letterSpacing: 2.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    '경기가 끝나도,\n우리의 이야기는 계속.',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 32,
+                      height: 1.45,
+                      letterSpacing: -1.2,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    height: 190,
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: PitchArt(color: Color(0xFF5879C0)),
+                        ),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _feature(Icons.forum_outlined, '대화는 이어서'),
+                              const SizedBox(height: 24),
+                              _feature(Icons.bookmark_border, '좋아하는 이야기는 가까이'),
+                              const SizedBox(height: 24),
+                              _feature(
+                                Icons.library_books_outlined,
+                                '정보는 출처와 함께',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 36),
+                  const Spacer(),
+                  const Text(
+                    'KEEP THE BLUE FLAG FLYING HIGH',
+                    style: TextStyle(
+                      color: BluesColors.gold,
+                      fontSize: 9,
+                      letterSpacing: 1.8,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
         ),
       ),
     ),
+  );
+
+  Widget _feature(IconData icon, String text) => Row(
+    children: [
+      Icon(icon, size: 17, color: const Color(0xFFAEC2F1)),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Text(
+          text,
+          style: const TextStyle(color: Color(0xFFCCD8F2), fontSize: 11),
+        ),
+      ),
+    ],
   );
 }

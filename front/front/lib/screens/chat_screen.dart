@@ -1,7 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/chat_api.dart';
+import '../theme/blues_theme.dart';
+import '../widgets/brand.dart';
+import '../widgets/chat_composer.dart';
+import '../widgets/conversation_sidebar.dart';
+import '../widgets/message_card.dart';
+import '../widgets/welcome_panel.dart';
 
 class ChatMessage {
   String text;
@@ -24,9 +32,9 @@ class ChelseaChatScreen extends StatefulWidget {
 }
 
 class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
-  static const blue = Color(0xFF034694);
-  static const navy = Color(0xFF071C39);
+  final _scaffold = GlobalKey<ScaffoldState>();
   final _controller = TextEditingController();
+  final _search = TextEditingController();
   final _scroll = ScrollController();
   final _messages = <ChatMessage>[];
   late final ChatApi _api;
@@ -36,6 +44,11 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
   bool _historyLoading = false;
   bool _listLoading = false;
   bool _archivedView = false;
+  bool _archivedSelection = false;
+  bool _pinnedOnly = false;
+  bool _followTail = true;
+  int _listRequest = 0;
+  Timer? _searchDebounce;
   bool get _managed => widget.username != null;
   bool _loading = false;
   int _generation = 0;
@@ -45,6 +58,7 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
   void initState() {
     super.initState();
     _api = widget.api ?? ChatApi();
+    _scroll.addListener(_onScroll);
     if (_managed) {
       _restoreConversations();
     } else {
@@ -61,13 +75,21 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
       _api.cancel();
     }
     _controller.dispose();
+    _searchDebounce?.cancel();
+    _search.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom() {
+  void _onScroll() {
+    final follow = _scroll.position.extentAfter < 100;
+    if (follow != _followTail) setState(() => _followTail = follow);
+  }
+
+  void _scrollToBottom({bool force = false}) {
+    if (force) _followTail = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _scroll.hasClients) {
+      if (mounted && _scroll.hasClients && _followTail) {
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
       }
     });
@@ -79,6 +101,8 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
     setState(() {
       _sessionId = _managed ? null : newSessionId();
       _title = '새 대화';
+      _archivedSelection = false;
+      _followTail = true;
       _historyLoading = false;
       _messages.clear();
       _loading = false;
@@ -102,7 +126,9 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
 
   Future<void> _sendMessage([String? suggested]) async {
     final text = (suggested ?? _controller.text).trim();
-    if (_loading || _historyLoading || text.isEmpty) return;
+    if (_loading || _historyLoading || _archivedSelection || text.isEmpty) {
+      return;
+    }
     final generation = ++_generation;
     final reply = ChatMessage('');
     _controller.clear();
@@ -111,12 +137,13 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
       _loading = true;
       _status = '블루스 봇에 연결하고 있습니다...';
     });
-    _scrollToBottom();
+    _scrollToBottom(force: true);
     try {
       if (_sessionId == null) {
         final created = await _api.createConversation();
         if (!mounted || generation != _generation) return;
         _sessionId = created['id'] as String;
+        _title = text.length > 40 ? text.substring(0, 40) : text;
       }
       await for (final event in _api.send(_sessionId!, text)) {
         if (!mounted || generation != _generation) return;
@@ -178,17 +205,28 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
 
   Future<void> _restoreConversations() async {
     final generation = _generation;
+    final request = ++_listRequest;
     setState(() {
       _historyLoading = true;
     });
     try {
       final conversations = await _api.conversations();
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation || request != _listRequest) {
+        return;
+      }
       setState(() {
         _conversations = conversations;
       });
       if (conversations.isNotEmpty) {
-        await _openConversation(conversations.first['id'] as String);
+        // Pinning changes list order, but restoration still opens the latest chat.
+        final latest = conversations.reduce(
+          (a, b) =>
+              ((a['updated_at'] as num?) ?? 0) >=
+                  ((b['updated_at'] as num?) ?? 0)
+              ? a
+              : b,
+        );
+        await _openConversation(latest['id'] as String);
       }
     } catch (error) {
       _showError(error);
@@ -203,12 +241,17 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
 
   Future<void> _refreshConversations() async {
     final archived = _archivedView;
+    final request = ++_listRequest;
     setState(() {
       _listLoading = true;
     });
     try {
-      final conversations = await _api.conversations(archived: archived);
-      if (mounted && archived == _archivedView) {
+      final conversations = await _api.conversations(
+        archived: archived,
+        query: _search.text.trim(),
+        pinnedOnly: _pinnedOnly,
+      );
+      if (mounted && request == _listRequest) {
         setState(() {
           _conversations = conversations;
           for (final conversation in conversations) {
@@ -219,9 +262,9 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
         });
       }
     } catch (error) {
-      _showError(error);
+      if (request == _listRequest) _showError(error);
     } finally {
-      if (mounted) {
+      if (mounted && request == _listRequest) {
         setState(() {
           _listLoading = false;
         });
@@ -252,12 +295,13 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
       setState(() {
         _sessionId = id;
         _title = detail['title'] as String;
+        _archivedSelection = detail['archived'] == true;
         _messages
           ..clear()
           ..addAll(messages);
         _controller.clear();
       });
-      _scrollToBottom();
+      _scrollToBottom(force: true);
     } catch (error) {
       _showError(error);
     } finally {
@@ -316,11 +360,14 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
   }
 
   Future<void> _archiveConversation(Map<String, dynamic> conversation) async {
-    final archived = !_archivedView;
+    final archived = conversation['archived'] != true;
     try {
       await _api.archiveConversation(conversation['id'] as String, archived);
       if (!mounted) return;
       if (archived && _sessionId == conversation['id']) _newChat();
+      if (!archived && _sessionId == conversation['id']) {
+        setState(() => _archivedSelection = false);
+      }
       await _refreshConversations();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -336,418 +383,332 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
     }
   }
 
-  Widget _historyDrawer() => Drawer(
-    child: SafeArea(
-      child: Column(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.account_circle_outlined),
-            title: Text(widget.username!),
-            subtitle: const Text('내 대화'),
-            trailing: IconButton(
-              tooltip: '로그아웃',
-              onPressed: () {
-                Navigator.pop(context);
-                widget.onLogout?.call();
-              },
-              icon: const Icon(Icons.logout),
-            ),
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.add_comment_outlined),
-            title: const Text('새 대화'),
-            onTap: () {
-              Navigator.pop(context);
-              _newChat();
-            },
-          ),
-          SwitchListTile(
-            title: const Text('보관한 대화'),
-            value: _archivedView,
-            onChanged: _listLoading
-                ? null
-                : (value) {
-                    setState(() {
-                      _archivedView = value;
-                    });
-                    _refreshConversations();
-                  },
-          ),
-          if (_listLoading) const LinearProgressIndicator(),
-          Expanded(
-            child: _conversations.isEmpty
-                ? const Center(child: Text('아직 대화가 없습니다.'))
-                : ListView.builder(
-                    itemCount: _conversations.length,
-                    itemBuilder: (context, index) {
-                      final conversation = _conversations[index];
-                      return ListTile(
-                        selected: _sessionId == conversation['id'],
-                        title: Text(
-                          conversation['title'] as String,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: _archivedView
-                            ? null
-                            : () {
-                                Navigator.pop(context);
-                                _openConversation(conversation['id'] as String);
-                              },
-                        trailing: PopupMenuButton<String>(
-                          tooltip: '대화 관리',
-                          onSelected: (value) {
-                            if (value == 'rename') {
-                              _renameConversation(conversation);
-                            } else {
-                              _archiveConversation(conversation);
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            const PopupMenuItem(
-                              value: 'rename',
-                              child: Text('이름 바꾸기'),
-                            ),
-                            PopupMenuItem(
-                              value: 'archive',
-                              child: Text(_archivedView ? '복원하기' : '보관하기'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    ),
+  void _searchChanged(String value) {
+    _searchDebounce?.cancel();
+    _listRequest++; // Immediately invalidate any previous response.
+    setState(() {
+      _listLoading = true;
+    });
+    _searchDebounce = Timer(
+      const Duration(milliseconds: 250),
+      _refreshConversations,
+    );
+  }
+
+  void _changeView(bool archived) {
+    setState(() {
+      _archivedView = archived;
+    });
+    _refreshConversations();
+  }
+
+  Future<void> _pinConversation(Map<String, dynamic> conversation) async {
+    try {
+      await _api.pinConversation(
+        conversation['id'] as String,
+        conversation['pinned'] != true,
+      );
+      if (mounted) await _refreshConversations();
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _copyConversation() async {
+    final content = StringBuffer('# $_title\n\n');
+    for (final message in _messages) {
+      content.writeln(
+        '## ${message.isUser ? '나' : 'BLUES BOT'}\n\n${message.text}\n',
+      );
+      for (final warning in message.warnings) {
+        content.writeln('> $warning\n');
+      }
+      for (final source in message.sources) {
+        final uri = safeWebUri(source['url'] as String?);
+        content.writeln(
+          '- [${source['id']}] ${source['title']}${uri == null ? '' : ' · $uri'}',
+        );
+      }
+      content.writeln();
+    }
+    await Clipboard.setData(ClipboardData(text: content.toString()));
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('출처를 포함한 대화를 복사했습니다.')));
+    }
+  }
+
+  void _closeDrawer() {
+    if (_scaffold.currentState?.isDrawerOpen == true) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Widget _sidebar() => ConversationSidebar(
+    username: widget.username!,
+    selectedId: _sessionId,
+    conversations: _conversations,
+    loading: _listLoading,
+    archived: _archivedView,
+    pinnedOnly: _pinnedOnly,
+    searchController: _search,
+    onSearch: _searchChanged,
+    onNew: () {
+      _closeDrawer();
+      _newChat();
+    },
+    onOpen: (id) {
+      _closeDrawer();
+      _openConversation(id);
+    },
+    onArchiveView: _changeView,
+    onPinnedView: () {
+      setState(() => _pinnedOnly = !_pinnedOnly);
+      _refreshConversations();
+    },
+    onRename: _renameConversation,
+    onArchive: _archiveConversation,
+    onPin: _pinConversation,
+    onLogout: () {
+      _closeDrawer();
+      widget.onLogout?.call();
+    },
   );
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF3F6FB),
-      drawer: _managed ? _historyDrawer() : null,
-      appBar: AppBar(
-        backgroundColor: navy,
-        foregroundColor: Colors.white,
-        leading: _managed
-            ? Builder(
-                builder: (context) => IconButton(
-                  tooltip: '내 대화',
-                  onPressed: () {
-                    _refreshConversations();
-                    Scaffold.of(context).openDrawer();
-                  },
-                  icon: const Icon(Icons.history),
-                ),
-              )
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = _managed && constraints.maxWidth >= 1000;
+      return Scaffold(
+        key: _scaffold,
+        drawer: _managed && !wide
+            ? Drawer(width: 300, child: _sidebar())
             : null,
-        title: const Row(
-          children: [
-            Icon(Icons.sports_soccer, color: Color(0xFFE9C66B)),
-            SizedBox(width: 10),
-            Flexible(
-              child: Text(
-                'BLUES BOT',
-                style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 2),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            onPressed: _newChat,
-            icon: const Icon(Icons.add_comment_outlined),
-            tooltip: '새 대화',
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 920),
-            child: Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_managed && _sessionId != null)
-                        Text(
-                          _title,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      const Text(
-                        '첼시 팬을 위한 비공식 AI · 최신 정보는 출처와 함께 확인하세요',
-                        style: TextStyle(
-                          color: Color(0xFF4D5E75),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: _historyLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _messages.isEmpty
-                      ? _welcome()
-                      : ListView.builder(
-                          controller: _scroll,
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                          itemCount: _messages.length,
-                          itemBuilder: (context, index) =>
-                              _bubble(_messages[index]),
-                        ),
-                ),
-                if (_loading)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                    child: Row(
-                      children: [
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _status,
-                            style: const TextStyle(fontSize: 12, color: blue),
+        body: SafeArea(
+          child: Row(
+            children: [
+              if (wide) SizedBox(width: 264, child: _sidebar()),
+              Expanded(
+                child: Column(
+                  children: [
+                    _header(wide),
+                    Expanded(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 960),
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: _historyLoading
+                                    ? const Center(
+                                        child: CircularProgressIndicator(),
+                                      )
+                                    : _messages.isEmpty
+                                    ? WelcomePanel(onQuestion: _sendMessage)
+                                    : Stack(
+                                        children: [
+                                          ListView.builder(
+                                            controller: _scroll,
+                                            padding: EdgeInsets.fromLTRB(
+                                              constraints.maxWidth < 600
+                                                  ? 16
+                                                  : 32,
+                                              12,
+                                              constraints.maxWidth < 600
+                                                  ? 16
+                                                  : 32,
+                                              24,
+                                            ),
+                                            itemCount: _messages.length,
+                                            itemBuilder: (context, index) {
+                                              final message = _messages[index];
+                                              return MessageCard(
+                                                key: ObjectKey(message),
+                                                text: message.text,
+                                                isUser: message.isUser,
+                                                incomplete: message.incomplete,
+                                                generating:
+                                                    _loading &&
+                                                    index ==
+                                                        _messages.length - 1,
+                                                sources: message.sources,
+                                                warnings: message.warnings,
+                                              );
+                                            },
+                                          ),
+                                          if (!_followTail)
+                                            Positioned(
+                                              bottom: 12,
+                                              right: 24,
+                                              child: FilledButton.icon(
+                                                onPressed: () {
+                                                  setState(() {});
+                                                  _scrollToBottom(force: true);
+                                                },
+                                                icon: const Icon(
+                                                  Icons.arrow_downward,
+                                                  size: 16,
+                                                ),
+                                                label: const Text('최신 답변'),
+                                                style: FilledButton.styleFrom(
+                                                  backgroundColor:
+                                                      BluesColors.navy,
+                                                  foregroundColor: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                              ),
+                              if (_loading)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 32,
+                                    vertical: 4,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const SizedBox(
+                                        width: 12,
+                                        height: 12,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          _status,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: BluesColors.blue,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              if (_archivedSelection)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    8,
+                                    20,
+                                    16,
+                                  ),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: BluesColors.paleBlue,
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Expanded(
+                                          child: Text(
+                                            '보관한 대화입니다.',
+                                            style: TextStyle(fontSize: 12),
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: () =>
+                                              _archiveConversation({
+                                                'id': _sessionId,
+                                                'archived': true,
+                                              }),
+                                          child: const Text('복원하고 이어가기'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              else
+                                ChatComposer(
+                                  controller: _controller,
+                                  loading: _loading,
+                                  disabled: _historyLoading,
+                                  onSend: _sendMessage,
+                                  onStop: _stop,
+                                ),
+                            ],
                           ),
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                _composer(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _welcome() => SingleChildScrollView(
-    padding: const EdgeInsets.all(28),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 36),
-        const Icon(Icons.shield_outlined, color: blue, size: 44),
-        const SizedBox(height: 24),
-        const Text(
-          '오늘도, 첼시 이야기.',
-          style: TextStyle(
-            color: navy,
-            fontSize: 32,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          '구단의 역사부터 최신 소식까지.\n궁금한 내용을 물어보면 근거를 찾아 답해드릴게요.',
-          style: TextStyle(fontSize: 16, height: 1.7, color: Color(0xFF52647A)),
-        ),
-        const SizedBox(height: 28),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final text in [
-              '첼시 최근 5경기 결과 알려줘',
-              '콜 파머 최근 경기 소식 알려줘',
-              '프리미어리그 순위 알려줘',
-              '스탬포드 브릿지에 대해 알려줘',
-            ])
-              ActionChip(
-                label: Text(text),
-                onPressed: () => _sendMessage(text),
-                backgroundColor: Colors.white,
+                  ],
+                ),
               ),
-          ],
+            ],
+          ),
         ),
-        const SizedBox(height: 32),
-        const Text(
-          'KEEP THE BLUE FLAG FLYING HIGH',
-          style: TextStyle(fontSize: 10, letterSpacing: 2, color: blue),
-        ),
-      ],
-    ),
+      );
+    },
   );
 
-  Widget _composer() => Container(
-    padding: const EdgeInsets.all(16),
+  Widget _header(bool wide) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
     decoration: const BoxDecoration(
       color: Colors.white,
-      border: Border(top: BorderSide(color: Color(0xFFE1E7F0))),
+      border: Border(bottom: BorderSide(color: BluesColors.line)),
     ),
     child: Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
+        if (_managed && !wide)
+          IconButton(
+            tooltip: '내 대화',
+            icon: const Icon(Icons.menu_rounded, size: 22),
+            onPressed: () {
+              _refreshConversations();
+              _scaffold.currentState?.openDrawer();
+            },
+          ),
+        if (!_managed)
+          const Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: BluesBrand(compact: true),
+          ),
         Expanded(
-          child: TextField(
-            key: const Key('question-input'),
-            controller: _controller,
-            minLines: 1,
-            maxLines: 4,
-            maxLength: 2000,
-            textInputAction: TextInputAction.send,
-            onSubmitted: (_) => _sendMessage(),
-            decoration: InputDecoration(
-              hintText: '첼시에 대해 질문하세요...',
-              counterText: '',
-              filled: true,
-              fillColor: const Color(0xFFF3F6FB),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide.none,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _sessionId != null && _messages.isNotEmpty ? _title : '팬 라운지',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: BluesColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
+              const SizedBox(height: 2),
+              const Text(
+                '우리의 모든 첼시 이야기',
+                style: TextStyle(fontSize: 10, color: BluesColors.muted),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 10),
-        IconButton.filled(
-          tooltip: _loading ? '답변 중지' : '질문 보내기',
-          style: IconButton.styleFrom(backgroundColor: blue),
-          onPressed: _loading ? _stop : () => _sendMessage(),
-          icon: Icon(
-            _loading ? Icons.stop_rounded : Icons.arrow_upward_rounded,
+        if (_messages.isNotEmpty)
+          IconButton(
+            tooltip: '대화 복사',
+            onPressed: _loading || _historyLoading ? null : _copyConversation,
+            icon: const Icon(
+              Icons.ios_share_outlined,
+              size: 20,
+              color: BluesColors.muted,
+            ),
+          ),
+        IconButton(
+          tooltip: '새 대화',
+          onPressed: _newChat,
+          icon: const Icon(
+            Icons.edit_square,
+            size: 21,
+            color: BluesColors.blue,
           ),
         ),
       ],
     ),
   );
-
-  Widget _bubble(ChatMessage message) => Align(
-    alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
-    child: Container(
-      constraints: const BoxConstraints(maxWidth: 720),
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: message.isUser ? blue : Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: message.incomplete
-            ? Border.all(color: Colors.orange.shade300)
-            : null,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!message.isUser)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 10),
-              child: Text(
-                'BLUES BOT',
-                style: TextStyle(
-                  fontSize: 10,
-                  letterSpacing: 1.5,
-                  color: blue,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          SelectableText(
-            message.text.isEmpty ? '근거를 확인하고 있습니다...' : message.text,
-            style: TextStyle(
-              color: message.isUser ? Colors.white : navy,
-              height: 1.7,
-              fontSize: 15,
-            ),
-          ),
-          for (final warning in message.warnings)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(
-                warning,
-                style: const TextStyle(
-                  color: Color(0xFF8A4B00),
-                  fontSize: 12,
-                  height: 1.5,
-                ),
-              ),
-            ),
-          if (message.sources.isNotEmpty)
-            Material(
-              color: Colors.transparent,
-              child: ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                title: Text(
-                  '참고한 출처 ${message.sources.length}개',
-                  style: const TextStyle(fontSize: 12, color: blue),
-                ),
-                children: [
-                  for (final source in message.sources) _source(source),
-                ],
-              ),
-            ),
-          if (!message.isUser && message.text.isNotEmpty)
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                tooltip: '답변 복사',
-                visualDensity: VisualDensity.compact,
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: message.text));
-                },
-                icon: const Icon(Icons.copy_outlined, size: 16, color: blue),
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
-
-  Widget _source(Map<String, dynamic> source) {
-    final date = DateTime.tryParse(source['retrieved_at'] as String? ?? '')
-        ?.toLocal();
-    final checked = date == null
-        ? ''
-        : '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F6FB),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '[${source['id']}] ${source['title']}',
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '조회 $checked${source['cached'] == true ? ' · 캐시된 결과' : ''}',
-            style: const TextStyle(fontSize: 10, color: Color(0xFF52647A)),
-          ),
-          if (source['published_at'] != null)
-            Text(
-              '발행 ${source['published_at']}',
-              style: const TextStyle(fontSize: 10),
-            ),
-          if (source['url'] != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: SelectableText(
-                source['url'] as String,
-                style: const TextStyle(fontSize: 11, color: blue),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 }

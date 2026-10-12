@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager, suppress
 
 import httpx
 import anyio
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -16,7 +16,7 @@ from history import ConversationBusy, ConversationLimit, ConversationMissing
 from request_control import RequestControl
 from config import Settings
 from providers import LiveData
-from schemas import ArchiveRequest, ChatRequest, ChatResponse, ConversationTitle, Credentials
+from schemas import ArchiveRequest, ChatRequest, ChatResponse, ConversationTitle, Credentials, PinRequest
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def create_app(settings: Settings | None = None, service=None) -> FastAPI:
             app.state.control = RequestControl(app.state.chat.history, settings)
             yield
 
-    app = FastAPI(title="Chelsea FC Blues Bot API", version="0.4.0", lifespan=lifespan)
+    app = FastAPI(title="Chelsea FC Blues Bot API", version="0.5.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins),
                        allow_credentials=True, allow_methods=["GET", "POST", "PATCH"],
                        allow_headers=["Content-Type", "Accept", "Authorization", "X-Client-Platform"])
@@ -140,8 +140,10 @@ def create_app(settings: Settings | None = None, service=None) -> FastAPI:
         return await asyncio.to_thread(app.state.chat.history.create, user["id"])
 
     @app.get("/api/v1/conversations")
-    async def conversations(archived: bool = False, user=Depends(current_user)):
-        return {"conversations": await asyncio.to_thread(app.state.chat.history.list_conversations, user["id"], archived)}
+    async def conversations(archived: bool = False, q: str = Query(default="", max_length=80),
+                            pinned_only: bool = False, user=Depends(current_user)):
+        return {"conversations": await asyncio.to_thread(app.state.chat.history.list_conversations,
+                                                          user["id"], archived, q.strip(), pinned_only)}
 
     @app.get("/api/v1/conversations/{session_id}")
     async def conversation(session_id: str, user=Depends(current_user)):
@@ -155,9 +157,13 @@ def create_app(settings: Settings | None = None, service=None) -> FastAPI:
     async def archive(session_id: str, body: ArchiveRequest, user=Depends(current_user)):
         return await asyncio.to_thread(app.state.chat.history.update, session_id, user["id"], archived=body.archived)
 
+    @app.post("/api/v1/conversations/{session_id}/pin")
+    async def pin(session_id: str, body: PinRequest, user=Depends(current_user)):
+        return await asyncio.to_thread(app.state.chat.history.update, session_id, user["id"], pinned=body.pinned)
+
     @app.get("/health")
     async def health():
-        return {"status": "ok", "version": "0.4.0", "capabilities": {
+        return {"status": "ok", "version": "0.5.0", "capabilities": {
             "chat": bool(settings.openai_api_key), "web_search": bool(settings.tavily_api_key),
             "football": bool(settings.football_api_key)}, "note": "설정 여부이며 외부 API 연결 상태를 보장하지 않습니다."}
 

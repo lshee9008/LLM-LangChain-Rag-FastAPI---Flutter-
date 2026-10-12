@@ -1,6 +1,6 @@
 [project]
 name = "back"
-version = "0.4.0"
+version = "0.5.0"
 description = "Chelsea FC fan chatbot with RAG, live tools and SSE streaming"
 readme = "README.md"
 requires-python = ">=3.10.12"

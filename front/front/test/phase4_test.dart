@@ -39,8 +39,12 @@ class AccountApi extends ChatApi {
   @override
   Future<List<Map<String, dynamic>>> conversations({
     bool archived = false,
+    String query = '',
+    bool pinnedOnly = false,
   }) async => items
       .where((item) => item['archived'] == archived)
+      .where((item) => !pinnedOnly || item['pinned'] == true)
+      .where((item) => (item['title'] as String).contains(query))
       .map((item) => Map<String, dynamic>.from(item))
       .toList();
   @override
@@ -87,6 +91,11 @@ class AccountApi extends ChatApi {
   @override
   Future<void> archiveConversation(String id, bool archived) async {
     items.firstWhere((item) => item['id'] == id)['archived'] = archived;
+  }
+
+  @override
+  Future<void> pinConversation(String id, bool pinned) async {
+    items.firstWhere((item) => item['id'] == id)['pinned'] = pinned;
   }
 }
 
@@ -162,6 +171,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.creates, 0);
       await tester.enterText(find.byKey(const Key('question-input')), '새 질문');
+      await tester.pump();
       await tester.tap(find.byTooltip('질문 보내기'));
       await tester.pumpAndSettle();
       expect(api.creates, 1);

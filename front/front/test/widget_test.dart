@@ -42,11 +42,12 @@ void main() {
     final api = FakeApi();
     await tester.pumpWidget(MaterialApp(home: ChelseaChatScreen(api: api)));
     await tester.enterText(find.byKey(const Key('question-input')), '홈구장 알려줘');
+    await tester.pump();
     await tester.tap(find.byTooltip('질문 보내기'));
     await tester.pump();
     api.events.add(const ChatEvent('token', {'text': '스탬포드 '}));
     await tester.pump();
-    expect(find.text('스탬포드 '), findsOneWidget);
+    expect(find.text('스탬포드'), findsOneWidget);
     expect(find.byTooltip('답변 중지'), findsOneWidget);
     api.events.add(
       const ChatEvent('done', {
@@ -70,6 +71,7 @@ void main() {
     final api = FakeApi();
     await tester.pumpWidget(MaterialApp(home: ChelseaChatScreen(api: api)));
     await tester.enterText(find.byKey(const Key('question-input')), '최근 경기');
+    await tester.pump();
     await tester.tap(find.byTooltip('질문 보내기'));
     await tester.pump();
     api.events.add(const ChatEvent('token', {'text': '일부 답변'}));
@@ -90,6 +92,7 @@ void main() {
     final api = FakeApi();
     await tester.pumpWidget(MaterialApp(home: ChelseaChatScreen(api: api)));
     await tester.enterText(find.byKey(const Key('question-input')), '홈구장');
+    await tester.pump();
     await tester.tap(find.byTooltip('질문 보내기'));
     await tester.pump();
     api.events.add(const ChatEvent('token', {'text': '일부 답변'}));
