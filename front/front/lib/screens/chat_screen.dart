@@ -15,7 +15,9 @@ class ChatMessage {
 
 class ChelseaChatScreen extends StatefulWidget {
   final ChatApi? api;
-  const ChelseaChatScreen({super.key, this.api});
+  final String? username;
+  final Future<void> Function()? onLogout;
+  const ChelseaChatScreen({super.key, this.api, this.username, this.onLogout});
 
   @override
   State<ChelseaChatScreen> createState() => _ChelseaChatScreenState();
@@ -28,7 +30,13 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
   final _scroll = ScrollController();
   final _messages = <ChatMessage>[];
   late final ChatApi _api;
-  String _sessionId = newSessionId();
+  String? _sessionId;
+  String _title = '새 대화';
+  List<Map<String, dynamic>> _conversations = [];
+  bool _historyLoading = false;
+  bool _listLoading = false;
+  bool _archivedView = false;
+  bool get _managed => widget.username != null;
   bool _loading = false;
   int _generation = 0;
   String _status = '';
@@ -37,12 +45,21 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
   void initState() {
     super.initState();
     _api = widget.api ?? ChatApi();
+    if (_managed) {
+      _restoreConversations();
+    } else {
+      _sessionId = newSessionId();
+    }
   }
 
   @override
   void dispose() {
     _generation++;
-    _api.dispose();
+    if (widget.api == null) {
+      _api.dispose();
+    } else {
+      _api.cancel();
+    }
     _controller.dispose();
     _scroll.dispose();
     super.dispose();
@@ -60,7 +77,9 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
     _generation++;
     _api.cancel();
     setState(() {
-      _sessionId = newSessionId();
+      _sessionId = _managed ? null : newSessionId();
+      _title = '새 대화';
+      _historyLoading = false;
       _messages.clear();
       _loading = false;
       _status = '';
@@ -83,7 +102,7 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
 
   Future<void> _sendMessage([String? suggested]) async {
     final text = (suggested ?? _controller.text).trim();
-    if (_loading || text.isEmpty) return;
+    if (_loading || _historyLoading || text.isEmpty) return;
     final generation = ++_generation;
     final reply = ChatMessage('');
     _controller.clear();
@@ -94,7 +113,12 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
     });
     _scrollToBottom();
     try {
-      await for (final event in _api.send(_sessionId, text)) {
+      if (_sessionId == null) {
+        final created = await _api.createConversation();
+        if (!mounted || generation != _generation) return;
+        _sessionId = created['id'] as String;
+      }
+      await for (final event in _api.send(_sessionId!, text)) {
         if (!mounted || generation != _generation) return;
         setState(() {
           switch (event.type) {
@@ -114,6 +138,9 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
           }
         });
         _scrollToBottom();
+      }
+      if (_managed && mounted && generation == _generation) {
+        await _refreshConversations();
       }
     } catch (error) {
       if (!mounted || generation != _generation) return;
@@ -136,13 +163,287 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
     }
   }
 
+  void _showError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error is ChatApiException
+              ? error.message
+              : '대화를 불러오지 못했습니다. 다시 시도해 주세요.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _restoreConversations() async {
+    final generation = _generation;
+    setState(() {
+      _historyLoading = true;
+    });
+    try {
+      final conversations = await _api.conversations();
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _conversations = conversations;
+      });
+      if (conversations.isNotEmpty) {
+        await _openConversation(conversations.first['id'] as String);
+      }
+    } catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _historyLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshConversations() async {
+    final archived = _archivedView;
+    setState(() {
+      _listLoading = true;
+    });
+    try {
+      final conversations = await _api.conversations(archived: archived);
+      if (mounted && archived == _archivedView) {
+        setState(() {
+          _conversations = conversations;
+          for (final conversation in conversations) {
+            if (conversation['id'] == _sessionId) {
+              _title = conversation['title'] as String;
+            }
+          }
+        });
+      }
+    } catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _listLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openConversation(String id) async {
+    final generation = ++_generation;
+    _api.cancel();
+    setState(() {
+      _loading = false;
+      _historyLoading = true;
+      _status = '';
+    });
+    try {
+      final detail = await _api.conversation(id);
+      if (!mounted || generation != _generation) return;
+      final messages = <ChatMessage>[];
+      for (final turn in detail['turns'] as List) {
+        messages.add(ChatMessage(turn['question'] as String, isUser: true));
+        messages.add(
+          ChatMessage(turn['answer'] as String)
+            ..sources = (turn['sources'] as List).cast<Map<String, dynamic>>()
+            ..warnings = (turn['warnings'] as List).cast<String>(),
+        );
+      }
+      setState(() {
+        _sessionId = id;
+        _title = detail['title'] as String;
+        _messages
+          ..clear()
+          ..addAll(messages);
+        _controller.clear();
+      });
+      _scrollToBottom();
+    } catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _historyLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _renameConversation(Map<String, dynamic> conversation) async {
+    var edited = conversation['title'] as String;
+    final title = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('대화 이름 바꾸기'),
+        content: TextFormField(
+          key: const Key('conversation-title-input'),
+          initialValue: edited,
+          onChanged: (value) {
+            edited = value;
+          },
+          maxLength: 80,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (edited.trim().isNotEmpty) {
+                Navigator.pop(context, edited.trim());
+              }
+            },
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+    if (title == null || !mounted) return;
+    try {
+      await _api.renameConversation(conversation['id'] as String, title);
+      if (!mounted) return;
+      if (_sessionId == conversation['id']) {
+        setState(() {
+          _title = title;
+        });
+      }
+      await _refreshConversations();
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _archiveConversation(Map<String, dynamic> conversation) async {
+    final archived = !_archivedView;
+    try {
+      await _api.archiveConversation(conversation['id'] as String, archived);
+      if (!mounted) return;
+      if (archived && _sessionId == conversation['id']) _newChat();
+      await _refreshConversations();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              archived ? '대화를 보관했습니다. 보관함에서 복원할 수 있어요.' : '대화를 복원했습니다.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Widget _historyDrawer() => Drawer(
+    child: SafeArea(
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.account_circle_outlined),
+            title: Text(widget.username!),
+            subtitle: const Text('내 대화'),
+            trailing: IconButton(
+              tooltip: '로그아웃',
+              onPressed: () {
+                Navigator.pop(context);
+                widget.onLogout?.call();
+              },
+              icon: const Icon(Icons.logout),
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.add_comment_outlined),
+            title: const Text('새 대화'),
+            onTap: () {
+              Navigator.pop(context);
+              _newChat();
+            },
+          ),
+          SwitchListTile(
+            title: const Text('보관한 대화'),
+            value: _archivedView,
+            onChanged: _listLoading
+                ? null
+                : (value) {
+                    setState(() {
+                      _archivedView = value;
+                    });
+                    _refreshConversations();
+                  },
+          ),
+          if (_listLoading) const LinearProgressIndicator(),
+          Expanded(
+            child: _conversations.isEmpty
+                ? const Center(child: Text('아직 대화가 없습니다.'))
+                : ListView.builder(
+                    itemCount: _conversations.length,
+                    itemBuilder: (context, index) {
+                      final conversation = _conversations[index];
+                      return ListTile(
+                        selected: _sessionId == conversation['id'],
+                        title: Text(
+                          conversation['title'] as String,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: _archivedView
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _openConversation(conversation['id'] as String);
+                              },
+                        trailing: PopupMenuButton<String>(
+                          tooltip: '대화 관리',
+                          onSelected: (value) {
+                            if (value == 'rename') {
+                              _renameConversation(conversation);
+                            } else {
+                              _archiveConversation(conversation);
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'rename',
+                              child: Text('이름 바꾸기'),
+                            ),
+                            PopupMenuItem(
+                              value: 'archive',
+                              child: Text(_archivedView ? '복원하기' : '보관하기'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F6FB),
+      drawer: _managed ? _historyDrawer() : null,
       appBar: AppBar(
         backgroundColor: navy,
         foregroundColor: Colors.white,
+        leading: _managed
+            ? Builder(
+                builder: (context) => IconButton(
+                  tooltip: '내 대화',
+                  onPressed: () {
+                    _refreshConversations();
+                    Scaffold.of(context).openDrawer();
+                  },
+                  icon: const Icon(Icons.history),
+                ),
+              )
+            : null,
         title: const Row(
           children: [
             Icon(Icons.sports_soccer, color: Color(0xFFE9C66B)),
@@ -175,13 +476,28 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
                     horizontal: 20,
                     vertical: 12,
                   ),
-                  child: const Text(
-                    '첼시 팬을 위한 비공식 AI · 최신 정보는 출처와 함께 확인하세요',
-                    style: TextStyle(color: Color(0xFF4D5E75), fontSize: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_managed && _sessionId != null)
+                        Text(
+                          _title,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      const Text(
+                        '첼시 팬을 위한 비공식 AI · 최신 정보는 출처와 함께 확인하세요',
+                        style: TextStyle(
+                          color: Color(0xFF4D5E75),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 Expanded(
-                  child: _messages.isEmpty
+                  child: _historyLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _messages.isEmpty
                       ? _welcome()
                       : ListView.builder(
                           controller: _scroll,
@@ -361,13 +677,18 @@ class _ChelseaChatScreenState extends State<ChelseaChatScreen> {
               ),
             ),
           if (message.sources.isNotEmpty)
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: Text(
-                '참고한 출처 ${message.sources.length}개',
-                style: const TextStyle(fontSize: 12, color: blue),
+            Material(
+              color: Colors.transparent,
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: Text(
+                  '참고한 출처 ${message.sources.length}개',
+                  style: const TextStyle(fontSize: 12, color: blue),
+                ),
+                children: [
+                  for (final source in message.sources) _source(source),
+                ],
               ),
-              children: [for (final source in message.sources) _source(source)],
             ),
           if (!message.isUser && message.text.isNotEmpty)
             Align(

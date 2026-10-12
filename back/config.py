@@ -23,6 +23,10 @@ class Settings:
     request_timeout: float = 120.0
     cache_ttl: float = 60.0
     max_tool_calls: int = 6
+    cookie_secure: bool = False
+    registration_enabled: bool = True
+    chat_requests_per_minute: int = 20
+    auth_requests_per_minute: int = 10
 
     @classmethod
     def from_env(cls):
@@ -33,6 +37,8 @@ class Settings:
             football_api_key=os.getenv("API_FOOTBALL_KEY", ""),
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+            cookie_secure=os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true",
+            registration_enabled=os.getenv("ALLOW_REGISTRATION", "true").lower() == "true",
             cors_origins=tuple(x.strip() for x in os.getenv(
                 "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
             ).split(",") if x.strip()),

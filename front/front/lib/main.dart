@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'screens/chat_screen.dart'; // 1. 작성한 chat_screen.dart 임포트
+import 'screens/auth_gate.dart';
 
 void main() {
   runApp(const MyApp());
@@ -20,8 +20,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF034694)),
         useMaterial3: true,
       ),
-      // 2. 앱 실행 시 첫 화면으로 ChelseaChatScreen 지정
-      home: const ChelseaChatScreen(),
+      home: const AuthGate(),
     );
   }
 }

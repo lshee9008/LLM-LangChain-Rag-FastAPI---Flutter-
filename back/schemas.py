@@ -30,3 +30,18 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[Source] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class Credentials(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9_]+$")
+    # Do not trim or normalize passwords.
+    password: str = Field(min_length=10, max_length=128, repr=False)
+
+
+class ConversationTitle(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=80)
+
+
+class ArchiveRequest(BaseModel):
+    archived: bool

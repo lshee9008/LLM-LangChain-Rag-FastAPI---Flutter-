@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:front/main.dart';
 import 'package:front/screens/chat_screen.dart';
 import 'package:front/services/chat_api.dart';
 
@@ -31,7 +30,7 @@ class FakeApi extends ChatApi {
 
 void main() {
   testWidgets('shows Chelsea welcome and suggested questions', (tester) async {
-    await tester.pumpWidget(const MyApp());
+    await tester.pumpWidget(const MaterialApp(home: ChelseaChatScreen()));
     expect(find.text('오늘도, 첼시 이야기.'), findsOneWidget);
     expect(find.text('첼시 최근 5경기 결과 알려줘'), findsOneWidget);
     expect(find.byTooltip('새 대화'), findsOneWidget);

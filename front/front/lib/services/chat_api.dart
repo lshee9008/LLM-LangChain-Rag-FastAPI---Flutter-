@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+
+import 'platform_client.dart';
 
 class ChatEvent {
   final String type;
@@ -44,7 +47,8 @@ String newSessionId() {
 
 class ChatApiException implements Exception {
   final String message;
-  const ChatApiException(this.message);
+  final int? statusCode;
+  const ChatApiException(this.message, {this.statusCode});
   @override
   String toString() => message;
 }
@@ -57,9 +61,104 @@ class ChatApi {
   final http.Client client;
   final String baseUrl;
   Completer<void>? _abort;
+  String? _token;
 
   ChatApi({http.Client? client, this.baseUrl = defaultBaseUrl})
-    : client = client ?? http.Client();
+    : client = client ?? createPlatformClient();
+
+  Map<String, String> get _headers => {
+    'Content-Type': 'application/json',
+    if (!kIsWeb) 'X-Client-Platform': 'native',
+    if (_token != null) 'Authorization': 'Bearer $_token',
+  };
+
+  Future<Map<String, dynamic>> _json(
+    String method,
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    try {
+      final request = http.Request(method, Uri.parse('$baseUrl$path'))
+        ..headers.addAll(_headers);
+      if (body != null) request.body = jsonEncode(body);
+      final streamed = await client
+          .send(request)
+          .timeout(const Duration(seconds: 20));
+      final response = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 20));
+      final data =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      if (response.statusCode >= 400) {
+        throw ChatApiException(
+          data['detail'] is String
+              ? data['detail'] as String
+              : '입력 내용을 확인해 주세요.',
+          statusCode: response.statusCode,
+        );
+      }
+      return data;
+    } on TimeoutException {
+      throw const ChatApiException('서버 응답 시간이 초과되었습니다. 다시 시도해 주세요.');
+    }
+  }
+
+  Future<Map<String, dynamic>?> currentUser() async {
+    try {
+      return (await _json('GET', '/api/v1/auth/me'))['user']
+          as Map<String, dynamic>;
+    } on ChatApiException catch (error) {
+      if (error.statusCode == 401) return null;
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> authenticate(
+    String username,
+    String password, {
+    bool register = false,
+  }) async {
+    final data = await _json(
+      'POST',
+      '/api/v1/auth/${register ? 'register' : 'login'}',
+      {'username': username, 'password': password},
+    );
+    _token = data['token'] as String?;
+    return data['user'] as Map<String, dynamic>;
+  }
+
+  Future<void> logout() async {
+    cancel();
+    try {
+      await _json('POST', '/api/v1/auth/logout', {});
+    } on ChatApiException catch (error) {
+      if (error.statusCode != 401) rethrow;
+    }
+    _token = null;
+  }
+
+  Future<List<Map<String, dynamic>>> conversations({
+    bool archived = false,
+  }) async =>
+      ((await _json(
+                'GET',
+                '/api/v1/conversations?archived=$archived',
+              ))['conversations']
+              as List)
+          .cast<Map<String, dynamic>>();
+
+  Future<Map<String, dynamic>> createConversation() =>
+      _json('POST', '/api/v1/conversations', {});
+  Future<Map<String, dynamic>> conversation(String id) =>
+      _json('GET', '/api/v1/conversations/$id');
+  Future<void> renameConversation(String id, String title) async {
+    await _json('PATCH', '/api/v1/conversations/$id', {'title': title});
+  }
+
+  Future<void> archiveConversation(String id, bool archived) async {
+    await _json('POST', '/api/v1/conversations/$id/archive', {
+      'archived': archived,
+    });
+  }
 
   void cancel() {
     if (_abort case final abort? when !abort.isCompleted) {
@@ -77,10 +176,7 @@ class ChatApi {
               Uri.parse('$baseUrl/api/v1/chat/stream'),
               abortTrigger: abort.future,
             )
-            ..headers.addAll({
-              'Content-Type': 'application/json',
-              'Accept': 'text/event-stream',
-            })
+            ..headers.addAll({..._headers, 'Accept': 'text/event-stream'})
             ..body = jsonEncode({
               'session_id': sessionId,
               'question': question,
@@ -99,7 +195,7 @@ class ChatApi {
         } on FormatException {
           // A proxy may return HTML rather than API JSON.
         }
-        throw ChatApiException(message);
+        throw ChatApiException(message, statusCode: response.statusCode);
       }
       if (!(response.headers['content-type'] ?? '').contains(
         'text/event-stream',

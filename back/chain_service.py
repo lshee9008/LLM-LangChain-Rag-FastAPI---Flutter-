@@ -49,19 +49,6 @@ class ChatService:
             self.model = ChatOpenAI(model=settings.model, api_key=settings.openai_api_key,
                                     temperature=0.2, timeout=settings.provider_timeout,
                                     max_retries=1, max_tokens=1800)
-        self.active: set[str] = set()
-
-    def reserve(self, session: str):
-        if session in self.active:
-            return "busy"
-        if len(self.active) >= 32:
-            return "capacity"
-        self.active.add(session)
-        return None
-
-    def release(self, session: str):
-        self.active.discard(session)
-
     async def stream(self, request: ChatRequest):
         sources: list[Source] = []
         warnings: list[str] = []
@@ -169,6 +156,7 @@ class ChatService:
         if not answer.strip():
             raise RuntimeError("empty answer")
         # Failure or cancellation before completion never stores a partial assistant turn.
-        await asyncio.to_thread(self.history.save, request.session_id, request.question, answer)
+        await asyncio.to_thread(self.history.save, request.session_id, request.question, answer,
+                                [s.model_dump() for s in sources], warnings)
         yield "done", {"session_id": request.session_id, "answer": answer,
                        "sources": [s.model_dump() for s in sources], "warnings": warnings}

@@ -17,6 +17,7 @@ from history import HistoryStore
 from main import create_app, encode_event
 from providers import LiveData, safe_url
 from rag_service import ChelseaKnowledge
+from request_control import RequestControl
 from schemas import ChatRequest, Evidence, Source
 
 
@@ -200,10 +201,13 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
 
     def test_same_session_reservation(self):
         service = self.service()
-        self.assertIsNone(service.reserve("a"))
-        self.assertEqual(service.reserve("a"), "busy")
-        service.release("a")
-        self.assertIsNone(service.reserve("a"))
+        control = RequestControl(service.history, self.settings)
+        session = service.history.create("owner")["id"]
+        state, token = control.acquire(session, "owner")
+        self.assertIsNone(state)
+        self.assertEqual(control.acquire(session, "owner")[0], "busy")
+        control.release(session, token)
+        self.assertIsNone(control.acquire(session, "owner")[0])
 
 
 class IndexTests(unittest.TestCase):
@@ -248,17 +252,23 @@ class ApiTests(unittest.TestCase):
     def service(self, model=None):
         return ChatService(self.settings, LiveData(self.settings, self.http), FakeKnowledge(), model or FakeModel())
 
+    def authorize(self, client):
+        response = client.post("/api/v1/auth/register", json={"username": "phase3_user", "password": "test-password-42"})
+        self.assertEqual(response.status_code, 201)
+        return client.post("/api/v1/conversations").json()["id"]
+
     def test_rest_sse_validation_and_cors(self):
         service = self.service()
         with TestClient(create_app(self.settings, service)) as client:
             self.assertTrue(client.get("/health").json()["capabilities"]["chat"])
-            body = {"session_id": "session_001", "question": "홈구장"}
+            session = self.authorize(client)
+            body = {"session_id": session, "question": "홈구장"}
             self.assertEqual(client.post("/api/v1/chat", json=body).status_code, 200)
             response = client.post("/api/v1/chat/stream", json=body)
             self.assertIn("text/event-stream", response.headers["content-type"])
             self.assertIn("event: done", response.text)
             self.assertIn("event: token", response.text)
-            self.assertFalse(service.active)
+            self.assertFalse(service.history.connect().execute("SELECT * FROM generation_leases").fetchall())
             for question in [" ", "x" * 2001]:
                 self.assertEqual(client.post("/api/v1/chat", json={**body, "question": question}).status_code, 422)
             preflight = client.options("/api/v1/chat/stream", headers={"origin": "http://localhost:5173", "access-control-request-method": "POST"})
@@ -268,11 +278,12 @@ class ApiTests(unittest.TestCase):
     def test_stream_error_is_safe_and_does_not_emit_done(self):
         service = self.service(FakeModel(fail=True))
         with TestClient(create_app(self.settings, service)) as client:
-            response = client.post("/api/v1/chat/stream", json={"session_id": "session_001", "question": "홈구장"})
+            session = self.authorize(client)
+            response = client.post("/api/v1/chat/stream", json={"session_id": session, "question": "홈구장"})
         self.assertIn("event: error", response.text)
         self.assertNotIn("event: done", response.text)
         self.assertNotIn("secret", response.text)
-        self.assertFalse(service.active)
+        self.assertFalse(service.history.connect().execute("SELECT * FROM generation_leases").fetchall())
 
     def test_stream_timeout_releases_session_and_does_not_store_partial_turn(self):
         class SlowModel(FakeModel):
@@ -282,19 +293,27 @@ class ApiTests(unittest.TestCase):
         settings = Settings(openai_api_key="test", history_db=self.settings.history_db, request_timeout=0.02)
         service = self.service(SlowModel())
         with TestClient(create_app(settings, service)) as client:
-            response = client.post("/api/v1/chat/stream", json={"session_id": "session_001", "question": "홈구장"})
+            session = self.authorize(client)
+            response = client.post("/api/v1/chat/stream", json={"session_id": session, "question": "홈구장"})
         self.assertIn("event: error", response.text)
         self.assertNotIn("event: done", response.text)
-        self.assertFalse(service.active)
-        self.assertFalse(service.history.load("session_001"))
+        self.assertFalse(service.history.connect().execute("SELECT * FROM generation_leases").fetchall())
+        self.assertFalse(service.history.load(session))
 
     def test_unconfigured_and_conflicting_sessions(self):
-        with TestClient(create_app(Settings())) as client:
-            self.assertEqual(client.post("/api/v1/chat", json={"session_id": "session_001", "question": "hi"}).status_code, 503)
+        with TestClient(create_app(Settings(history_db=self.settings.history_db))) as client:
+            session = self.authorize(client)
+            self.assertEqual(client.post("/api/v1/chat", json={"session_id": session, "question": "hi"}).status_code, 503)
         service = self.service()
-        service.reserve("session_001")
         with TestClient(create_app(self.settings, service)) as client:
-            self.assertEqual(client.post("/api/v1/chat/stream", json={"session_id": "session_001", "question": "hi"}).status_code, 409)
+            response = client.post("/api/v1/auth/login", json={"username": "phase3_user", "password": "test-password-42"})
+            self.assertEqual(response.status_code, 200)
+            session = client.post("/api/v1/conversations").json()["id"]
+            user = client.get("/api/v1/auth/me").json()["user"]
+            state, lease = client.app.state.control.acquire(session, user["id"])
+            self.assertIsNone(state)
+            self.assertEqual(client.post("/api/v1/chat/stream", json={"session_id": session, "question": "hi"}).status_code, 409)
+            client.app.state.control.release(session, lease)
 
     def test_event_encoding_keeps_newlines_inside_json(self):
         event = encode_event("token", {"text": "안녕\n첼시"})
